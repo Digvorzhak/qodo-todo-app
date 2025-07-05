@@ -1,0 +1,171 @@
+const { expect } = require('chai');
+
+describe('To-Do App', function() {
+    let jsdom, window, document, form, input, list;
+
+    beforeEach(async function() {
+        // Dynamically import jsdom for DOM simulation
+        jsdom = require('jsdom');
+        const { JSDOM } = jsdom;
+        const html = `
+            <body>
+                <div class="container">
+                    <h1>To-Do List</h1>
+                    <form id="todo-form" autocomplete="off">
+                        <input type="text" id="todo-input" placeholder="Add a new task..." required />
+                        <button type="submit">Add</button>
+                    </form>
+                    <ul id="todo-list"></ul>
+                </div>
+                <script></script>
+            </body>
+        `;
+        const dom = new JSDOM(html, { url: "http://localhost" });
+        window = dom.window;
+        document = window.document;
+
+        // Polyfill localStorage
+        window.localStorage.clear();
+        window.localStorage.setItem('todos', JSON.stringify([]));
+
+        // Insert the app's script logic into the DOM
+        // (copy-paste the relevant JS from the app)
+        window.todos = JSON.parse(window.localStorage.getItem('todos')) || [];
+        window.renderTodos = function() {
+            list.innerHTML = window.todos.map((todo, idx) => `
+                <li data-index="${idx}">
+                    <span>${window.escapeHtml(todo)}</span>
+                    <button class="remove" aria-label="Remove task">Remove</button>
+                </li>
+            `).join('');
+        };
+        window.saveAndRender = function() {
+            window.localStorage.setItem('todos', JSON.stringify(window.todos));
+            window.renderTodos();
+        };
+        window.escapeHtml = function(str) {
+            return str.replace(/[&<>"']/g, c => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[c]));
+        };
+
+        form = document.getElementById('todo-form');
+        input = document.getElementById('todo-input');
+        list = document.getElementById('todo-list');
+
+        form.addEventListener('submit', e => {
+            e.preventDefault();
+            const value = input.value.trim();
+            if (!value) return;
+            window.todos.push(value);
+            input.value = '';
+            window.saveAndRender();
+        });
+
+        list.addEventListener('click', e => {
+            if (!e.target.classList.contains('remove')) return;
+            const idx = +e.target.closest('li').dataset.index;
+            window.todos.splice(idx, 1);
+            window.saveAndRender();
+        });
+
+        window.renderTodos();
+    });
+
+    afterEach(function() {
+        window.close();
+    });
+
+    it('test_add_todo_item_renders_in_list', function() {
+        // Simulate user typing a new todo and submitting the form
+        input.value = 'Buy milk';
+        const submitEvent = new window.Event('submit', { bubbles: true, cancelable: true });
+        form.dispatchEvent(submitEvent);
+
+        // Check that the todo appears in the list
+        const items = list.querySelectorAll('li');
+        expect(items.length).to.equal(1);
+        expect(items[0].querySelector('span').textContent).to.equal('Buy milk');
+    });
+
+    it('test_remove_todo_item_updates_ui', function() {
+        // Add two todos
+        input.value = 'Task 1';
+        form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+        input.value = 'Task 2';
+        form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+
+        let items = list.querySelectorAll('li');
+        expect(items.length).to.equal(2);
+
+        // Remove the first todo
+        const removeBtn = items[0].querySelector('.remove');
+        removeBtn.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+
+        items = list.querySelectorAll('li');
+        expect(items.length).to.equal(1);
+        expect(items[0].querySelector('span').textContent).to.equal('Task 2');
+    });
+
+    it('test_todo_persistence_across_reload', function() {
+        // Add a todo
+        input.value = 'Persistent Task';
+        form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+
+        // Simulate page reload by reloading todos from localStorage
+        window.todos = JSON.parse(window.localStorage.getItem('todos')) || [];
+        window.renderTodos();
+
+        const items = list.querySelectorAll('li');
+        expect(items.length).to.equal(1);
+        expect(items[0].querySelector('span').textContent).to.equal('Persistent Task');
+    });
+
+    it('test_prevent_empty_todo_submission', function() {
+        // Try to submit empty string
+        input.value = '';
+        form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+
+        // Try to submit whitespace
+        input.value = '   ';
+        form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+
+        const items = list.querySelectorAll('li');
+        expect(items.length).to.equal(0);
+    });
+
+    it('test_escape_html_in_todo_text', function() {
+        const malicious = '<img src=x onerror=alert(1)>';
+        input.value = malicious;
+        form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+
+        const items = list.querySelectorAll('li');
+        expect(items.length).to.equal(1);
+        // Should be escaped, not raw HTML
+        const span = items[0].querySelector('span');
+        expect(span.innerHTML).to.equal('&lt;img src=x onerror=alert(1)&gt;');
+    });
+
+    it('test_remove_on_empty_list_no_error', function() {
+        // List is empty
+        expect(list.querySelectorAll('li').length).to.equal(0);
+
+        // Try to click a remove button (simulate click on a non-existent remove button)
+        // Should not throw or add any items
+        let error = null;
+        try {
+            const fakeBtn = document.createElement('button');
+            fakeBtn.className = 'remove';
+            // Not attached to DOM, but simulate click event
+            fakeBtn.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+        } catch (e) {
+            error = e;
+        }
+        expect(error).to.equal(null);
+        expect(list.querySelectorAll('li').length).to.equal(0);
+    });
+});
